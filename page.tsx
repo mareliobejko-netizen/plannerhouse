@@ -1,18 +1,15 @@
+"use client";
 
-import { createClient } from '@/utils/supabase/server'
-import { cookies } from 'next/headers'
+import { useEffect } from "react";
+import { supabase } from "@/lib/supabaseClient";
 
-export default async function Page() {
-  const cookieStore = await cookies()
-  const supabase = createClient(cookieStore)
+export default function Page() {
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.auth.getSession();
+      window.location.href = data.session ? "/events" : "/login";
+    })();
+  }, []);
 
-  const { data: todos } = await supabase.from('todos').select()
-
-  return (
-    <ul>
-      {todos?.map((todo) => (
-        <li>{todo}</li>
-      ))}
-    </ul>
-  )
+  return null;
 }
