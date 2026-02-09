@@ -583,6 +583,16 @@ function refreshPhotoCache(apartmentId: string) {
             </button>
 
             <button className="btn-ghost" onClick={() => (window.location.href = "/events")}>Torna eventi</button>
+            <button
+  className="btn-ghost"
+  onClick={async () => {
+    await supabase.auth.signOut();
+    window.location.href = "/login";
+  }}
+>
+  Logout
+</button>
+
           </div>
         </div>
         <div className="green-line" />
