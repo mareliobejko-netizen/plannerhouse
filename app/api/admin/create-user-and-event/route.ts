@@ -19,6 +19,7 @@ export async function POST(req: Request) {
     if (!url || !anon || !service) {
       return NextResponse.json({ error: "Missing env vars" }, { status: 500 });
     }
+//
 
     // Client "normale" per validare il token dell'admin (RLS)
     const supabase = createClient(url, anon);

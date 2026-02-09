@@ -62,18 +62,13 @@ export default function EventPlannerPage() {
   const eventId = params?.eventId as string | undefined;
 
   const [err, setErr] = useState<string | null>(null);
-
-  // UI message (success/error)
   const [uiMsg, setUiMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
 
-  // Stato evento per badge topbar
   const [eventStatus, setEventStatus] = useState<"draft" | "submitted" | "final">("draft");
   const statusLabel = eventStatus === "draft" ? "Bozza" : eventStatus === "submitted" ? "Inviata" : "Completa";
-  const locked = eventStatus !== "draft"; // quando submitted/final non si modifica più
+  const locked = eventStatus !== "draft";
 
   const [submitting, setSubmitting] = useState(false);
-
-  const [photoCache, setPhotoCache] = useState<Record<string, string[]>>({});
 
   // Occupancy
   const [occ, setOcc] = useState<OccRow[]>([]);
@@ -105,6 +100,7 @@ export default function EventPlannerPage() {
   // Photos
   const [photoUrls, setPhotoUrls] = useState<string[]>([]);
   const [photoIndex, setPhotoIndex] = useState(0);
+  const [photoCache, setPhotoCache] = useState<Record<string, string[]>>({});
 
   // Form add guest
   const [firstName, setFirstName] = useState("");
@@ -146,8 +142,26 @@ export default function EventPlannerPage() {
     });
   }, [occ]);
 
-  
-  
+  function resetForm() {
+    setFirstName("");
+    setLastName("");
+    setGuestType("adult");
+    setChildAge("");
+    setArrivalMode("");
+    setCheckinDate("");
+    setCheckoutDate("");
+    setExtraNights(0);
+    setAllergies("");
+    setNotes("");
+  }
+
+  async function refreshEventStatus() {
+    if (!eventId) return;
+    const { data, error } = await supabase.from("events").select("status").eq("id", eventId).single();
+    if (error) throw new Error(error.message);
+    if (data?.status) setEventStatus(data.status);
+  }
+
   async function refreshOccupancy() {
     if (!eventId) return;
     const { data, error } = await supabase
@@ -159,15 +173,9 @@ export default function EventPlannerPage() {
     setOcc((data ?? []) as OccRow[]);
   }
 
-  async function refreshEventStatus() {
-    if (!eventId) return;
-    const { data, error } = await supabase.from("events").select("status").eq("id", eventId).single();
-    if (error) throw new Error(error.message);
-    if (data?.status) setEventStatus(data.status);
-  }
-
   async function loadUnassigned(usingOcc?: OccRow[]) {
     if (!eventId) return;
+
     const { data, error } = await supabase
       .from("guests")
       .select(
@@ -195,7 +203,62 @@ export default function EventPlannerPage() {
     });
   }
 
-  // ✅ CONFERMA (NO RPC): cambia status e blocca modifiche
+  async function loadGuestsForApartment(apartmentId: string) {
+    if (!eventId) return;
+    const { data, error } = await supabase
+      .from("guests")
+      .select(
+        "id,event_id,apartment_id,first_name,last_name,guest_type,child_age,arrival_mode,checkin_date,checkout_date,extra_nights,allergies,notes"
+      )
+      .eq("event_id", eventId)
+      .eq("apartment_id", apartmentId)
+      .order("created_at", { ascending: true });
+
+    if (error) throw new Error(error.message);
+    setAptGuests((data ?? []) as GuestRow[]);
+  }
+
+  async function loadApartmentPhotos(apartmentId: string) {
+    setPhotoIndex(0);
+
+    const cached = photoCache[apartmentId];
+    if (cached && cached.length) {
+      setPhotoUrls(cached);
+      return;
+    }
+
+    setPhotoUrls([]);
+
+    const { data, error } = await supabase.storage
+      .from("apartment-photos")
+      .list(apartmentId, { limit: 100, sortBy: { column: "name", order: "asc" } });
+
+    if (error) throw new Error(error.message);
+
+    const files = (data ?? [])
+      .filter((f) => f.name && !f.name.endsWith("/"))
+      .map((f) => `${apartmentId}/${f.name}`);
+
+    const urls = files.map((path) => supabase.storage.from("apartment-photos").getPublicUrl(path).data.publicUrl);
+
+    setPhotoCache((prev) => ({ ...prev, [apartmentId]: urls }));
+    setPhotoUrls(urls);
+
+    // prefetch leggero per fluidità
+    urls.slice(0, 5).forEach((u) => {
+      const img = new Image();
+      img.src = u;
+    });
+  }
+
+  function refreshPhotoCache(apartmentId: string) {
+    setPhotoCache((prev) => {
+      const next = { ...prev };
+      delete next[apartmentId];
+      return next;
+    });
+  }
+
   async function submitEvent() {
     if (!eventId) return;
 
@@ -229,74 +292,6 @@ export default function EventPlannerPage() {
     } finally {
       setSubmitting(false);
     }
-  }
-
-  async function loadGuestsForApartment(apartmentId: string) {
-    if (!eventId) return;
-    const { data, error } = await supabase
-      .from("guests")
-      .select(
-        "id,event_id,apartment_id,first_name,last_name,guest_type,child_age,arrival_mode,checkin_date,checkout_date,extra_nights,allergies,notes"
-      )
-      .eq("event_id", eventId)
-      .eq("apartment_id", apartmentId)
-      .order("created_at", { ascending: true });
-
-    if (error) throw new Error(error.message);
-    setAptGuests((data ?? []) as GuestRow[]);
-  }
-
-  async function loadApartmentPhotos(apartmentId: string) {
-  setPhotoIndex(0);
-
-  // ✅ CACHE HIT: se già presenti, usa cache e basta
-  const cached = photoCache[apartmentId];
-  if (cached && cached.length) {
-    setPhotoUrls(cached);
-    return;
-  }
-
-  // reset UI mentre carica
-  setPhotoUrls([]);
-
-  const { data, error } = await supabase.storage
-    .from("apartment-photos")
-    .list(apartmentId, { limit: 100, sortBy: { column: "name", order: "asc" } });
-
-  if (error) throw new Error(error.message);
-
-  const files = (data ?? [])
-    .filter((f) => f.name && !f.name.endsWith("/"))
-    .map((f) => `${apartmentId}/${f.name}`);
-
-  const urls = files.map(
-    (path) => supabase.storage.from("apartment-photos").getPublicUrl(path).data.publicUrl
-  );
-
-  // ✅ salva in cache + usa subito
-  setPhotoCache((prev) => ({ ...prev, [apartmentId]: urls }));
-  setPhotoUrls(urls);
-}
-function refreshPhotoCache(apartmentId: string) {
-  setPhotoCache((prev) => {
-    const next = { ...prev };
-    delete next[apartmentId];
-    return next;
-  });
-}
-
-
-  function resetForm() {
-    setFirstName("");
-    setLastName("");
-    setGuestType("adult");
-    setChildAge("");
-    setArrivalMode("");
-    setCheckinDate("");
-    setCheckoutDate("");
-    setExtraNights(0);
-    setAllergies("");
-    setNotes("");
   }
 
   async function runSearch() {
@@ -337,7 +332,6 @@ function refreshPhotoCache(apartmentId: string) {
     setModalErr(null);
     setOpenAptId(apartmentId);
     resetForm();
-
     try {
       await Promise.all([loadGuestsForApartment(apartmentId), loadApartmentPhotos(apartmentId)]);
     } catch (e: any) {
@@ -360,12 +354,11 @@ function refreshPhotoCache(apartmentId: string) {
     }
     setModalErr(null);
     setSidebarErr(null);
+
     try {
       const { error } = await supabase.from("guests").delete().eq("id", guestId);
-      if (error) {
-        setModalErr(error.message);
-        return;
-      }
+      if (error) throw new Error(error.message);
+
       await refreshOccupancy();
       await loadUnassigned();
       if (openAptId) await loadGuestsForApartment(openAptId);
@@ -397,11 +390,7 @@ function refreshPhotoCache(apartmentId: string) {
 
     try {
       const { error } = await supabase.from("guests").update({ apartment_id: apartmentId }).eq("id", guestId);
-      if (error) {
-        if (fromModal) setModalErr(error.message);
-        else setSidebarErr(error.message);
-        return;
-      }
+      if (error) throw new Error(error.message);
 
       await refreshOccupancy();
       await loadUnassigned();
@@ -418,8 +407,8 @@ function refreshPhotoCache(apartmentId: string) {
       setModalErr("Lista confermata: non puoi più modificare.");
       return;
     }
-
     if (!eventId) return;
+
     setModalErr(null);
 
     if (!firstName.trim() || !lastName.trim()) {
@@ -459,10 +448,7 @@ function refreshPhotoCache(apartmentId: string) {
       };
 
       const { error } = await supabase.from("guests").insert(payload);
-      if (error) {
-        setModalErr(error.message);
-        return;
-      }
+      if (error) throw new Error(error.message);
 
       await refreshOccupancy();
       await loadUnassigned();
@@ -476,7 +462,7 @@ function refreshPhotoCache(apartmentId: string) {
     }
   }
 
-  // ✅ unico useEffect iniziale: auth + load (NO loop)
+  // INIT: auth + load once
   useEffect(() => {
     (async () => {
       try {
@@ -494,24 +480,25 @@ function refreshPhotoCache(apartmentId: string) {
           return;
         }
 
-        // carica status + occupancy
+        // Occupancy
         const { data: occData, error: occErr } = await supabase
           .from("apartment_occupancy")
           .select("event_id,apartment_id,capacity,guests_count,structure,floor")
           .eq("event_id", eventId);
-
         if (occErr) throw new Error(occErr.message);
+
         const occRows = (occData ?? []) as OccRow[];
         setOcc(occRows);
 
+        // Status
         const { data: ev, error: evErr } = await supabase.from("events").select("status").eq("id", eventId).single();
         if (evErr) throw new Error(evErr.message);
         if (ev?.status) setEventStatus(ev.status);
 
-        // carica non assegnati (usa occRows già pronti)
+        // Unassigned
         await loadUnassigned(occRows);
 
-        // carica SVG una sola volta
+        // SVG only once
         if (!svgs.lake0) {
           const [s0, s1, sw] = await Promise.all([
             loadSvg("/plans/lakehouse_0floor.svg"),
@@ -582,17 +569,19 @@ function refreshPhotoCache(apartmentId: string) {
               {submitting ? "Confermo..." : "Conferma lista"}
             </button>
 
-            <button className="btn-ghost" onClick={() => (window.location.href = "/events")}>Torna eventi</button>
-            <button
-  className="btn-ghost"
-  onClick={async () => {
-    await supabase.auth.signOut();
-    window.location.href = "/login";
-  }}
->
-  Logout
-</button>
+            <button className="btn-ghost" onClick={() => (window.location.href = "/events")}>
+              Torna eventi
+            </button>
 
+            <button
+              className="btn-ghost"
+              onClick={async () => {
+                await supabase.auth.signOut();
+                window.location.href = "/login";
+              }}
+            >
+              Logout
+            </button>
           </div>
         </div>
         <div className="green-line" />
@@ -724,6 +713,7 @@ function refreshPhotoCache(apartmentId: string) {
                 <div className="h-serif" style={{ fontSize: 18, fontWeight: 700 }}>Non assegnati</div>
                 <span className="badge draft">{unassigned.length}</span>
               </div>
+
               {sidebarErr && <div style={{ color: "#b91c1c", marginTop: 8 }}>{sidebarErr}</div>}
 
               {unassigned.length === 0 ? (
@@ -784,7 +774,9 @@ function refreshPhotoCache(apartmentId: string) {
             <div className="modal" onClick={(e) => e.stopPropagation()}>
               <div className="modal-head">
                 <div>
-                  <div className="h-serif" style={{ fontSize: 22, fontWeight: 700 }}>{friendlyAptLabel(openAptId)}</div>
+                  <div className="h-serif" style={{ fontSize: 22, fontWeight: 700 }}>
+                    {friendlyAptLabel(openAptId)}
+                  </div>
                   <div className="muted" style={{ marginTop: 4 }}>
                     Stato: <b>{openAptInfo?.status ?? "free"}</b> • Ospiti: <b>{openAptInfo?.guests ?? 0}</b> / <b>{openAptInfo?.capacity ?? "?"}</b>
                   </div>
@@ -799,40 +791,80 @@ function refreshPhotoCache(apartmentId: string) {
                   </div>
                 )}
 
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-                  {/* Foto + ospiti */}
+                <div className="modal-body-grid">
+                  {/* COLONNA SINISTRA */}
                   <div className="card card-pad" style={{ boxShadow: "none" }}>
-                    <div className="h-serif" style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>Foto</div>
-<button
-  className="btn-ghost btn-sm"
-  onClick={() => {
-    if (!openAptId) return;
-    refreshPhotoCache(openAptId);
-    loadApartmentPhotos(openAptId);
-  }}
->
-  Aggiorna foto
-</button>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+                      <div className="h-serif" style={{ fontSize: 18, fontWeight: 700 }}>
+                        Foto
+                      </div>
+
+                      <button
+                        className="btn-ghost btn-sm"
+                        onClick={() => {
+                          if (!openAptId) return;
+                          refreshPhotoCache(openAptId);
+                          loadApartmentPhotos(openAptId);
+                        }}
+                      >
+                        Aggiorna
+                      </button>
+                    </div>
 
                     {photoUrls.length === 0 ? (
-                      <div className="muted">Nessuna foto caricata.</div>
+                      <div className="muted" style={{ marginTop: 10 }}>Nessuna foto caricata.</div>
                     ) : (
-                      <div>
-                        <div style={{ borderRadius: 16, overflow: "hidden", border: "1px solid rgba(48,64,48,.12)" }}>
-                          <img src={photoUrls[photoIndex]} alt="Apartment photo" style={{ width: "100%", height: 260, objectFit: "cover", display: "block" }} />
+                      <>
+                        <div className="photo-hero" style={{ marginTop: 10 }}>
+                          <img src={photoUrls[photoIndex]} alt="Apartment photo" />
                         </div>
 
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginTop: 8 }}>
-                          <button className="btn-ghost btn-sm" onClick={() => setPhotoIndex((i) => Math.max(0, i - 1))} disabled={photoIndex === 0}>←</button>
-                          <span className="muted">{photoIndex + 1} / {photoUrls.length}</span>
-                          <button className="btn-ghost btn-sm" onClick={() => setPhotoIndex((i) => Math.min(photoUrls.length - 1, i + 1))} disabled={photoIndex >= photoUrls.length - 1}>→</button>
+                        {/* mini strip 5 foto */}
+                        <div className="photo-strip">
+                          {photoUrls.slice(0, 5).map((url, idx) => (
+                            <div
+                              key={url}
+                              className={`thumb ${idx === photoIndex ? "active" : ""}`}
+                              onClick={() => setPhotoIndex(idx)}
+                              role="button"
+                              aria-label={`Foto ${idx + 1}`}
+                            >
+                              <img src={url} alt={`Thumb ${idx + 1}`} />
+                            </div>
+                          ))}
                         </div>
-                      </div>
+
+                        {/* frecce */}
+                        <div className="photo-nav">
+                          <button
+                            className="btn-ghost btn-sm"
+                            onClick={() => setPhotoIndex((i) => Math.max(0, i - 1))}
+                            disabled={photoIndex === 0}
+                          >
+                            ←
+                          </button>
+
+                          <span className="muted">
+                            {photoIndex + 1} / {photoUrls.length}
+                          </span>
+
+                          <button
+                            className="btn-ghost btn-sm"
+                            onClick={() => setPhotoIndex((i) => Math.min(photoUrls.length - 1, i + 1))}
+                            disabled={photoIndex >= photoUrls.length - 1}
+                          >
+                            →
+                          </button>
+                        </div>
+                      </>
                     )}
 
-                    <div style={{ height: 12 }} />
+                    <div style={{ height: 14 }} />
 
-                    <div className="h-serif" style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>Ospiti</div>
+                    <div className="h-serif" style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>
+                      Ospiti
+                    </div>
+
                     {aptGuests.length === 0 ? (
                       <div className="muted">Nessun ospite assegnato.</div>
                     ) : (
@@ -841,7 +873,9 @@ function refreshPhotoCache(apartmentId: string) {
                           <div key={g.id} style={{ border: "1px solid rgba(48,64,48,.12)", borderRadius: 14, padding: 10 }}>
                             <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
                               <div style={{ fontWeight: 700 }}>{guestLabel(g)}</div>
-                              <button className="btn-ghost btn-sm" disabled={locked} onClick={() => deleteGuest(g.id)}>Elimina</button>
+                              <button className="btn-ghost btn-sm" disabled={locked} onClick={() => deleteGuest(g.id)}>
+                                Elimina
+                              </button>
                             </div>
 
                             <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: 8, marginTop: 8 }}>
@@ -872,7 +906,9 @@ function refreshPhotoCache(apartmentId: string) {
                                 Sposta
                               </button>
 
-                              <button className="btn-ghost" disabled={locked} onClick={() => setGuestApartment(g.id, null, true)}>⇢ Non assegnato</button>
+                              <button className="btn-ghost" disabled={locked} onClick={() => setGuestApartment(g.id, null, true)}>
+                                ⇢ Non assegnato
+                              </button>
                             </div>
                           </div>
                         ))}
@@ -880,11 +916,14 @@ function refreshPhotoCache(apartmentId: string) {
                     )}
                   </div>
 
-                  {/* Aggiungi */}
+                  {/* COLONNA DESTRA */}
                   <div className="card card-pad" style={{ boxShadow: "none" }}>
-                    <div className="h-serif" style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>Aggiungi ospite</div>
+                    <div className="h-serif" style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>
+                      Aggiungi ospite
+                    </div>
 
                     <div style={{ display: "grid", gap: 10 }}>
+                      {/* Nome/Cognome */}
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                         <div>
                           <div className="label">Nome</div>
@@ -896,6 +935,7 @@ function refreshPhotoCache(apartmentId: string) {
                         </div>
                       </div>
 
+                      {/* Tipo / Età */}
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                         <div>
                           <div className="label">Tipo</div>
@@ -918,6 +958,7 @@ function refreshPhotoCache(apartmentId: string) {
                         </div>
                       </div>
 
+                      {/* Arrivo */}
                       <div>
                         <div className="label">Arrivo</div>
                         <select value={arrivalMode} onChange={(e) => setArrivalMode(e.target.value as any)} disabled={saving || locked}>
@@ -927,6 +968,7 @@ function refreshPhotoCache(apartmentId: string) {
                         </select>
                       </div>
 
+                      {/* Check-in/out */}
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                         <div>
                           <div className="label">Check-in</div>
@@ -954,8 +996,12 @@ function refreshPhotoCache(apartmentId: string) {
                       </div>
 
                       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                        <button className="btn" onClick={() => addGuest(false)} disabled={saving || locked}>Aggiungi qui</button>
-                        <button className="btn-ghost" onClick={() => addGuest(true)} disabled={saving || locked}>Aggiungi non assegnato</button>
+                        <button className="btn" onClick={() => addGuest(false)} disabled={saving || locked}>
+                          Aggiungi qui
+                        </button>
+                        <button className="btn-ghost" onClick={() => addGuest(true)} disabled={saving || locked}>
+                          Aggiungi non assegnato
+                        </button>
                       </div>
 
                       <div className="muted" style={{ fontSize: 12 }}>
@@ -964,7 +1010,6 @@ function refreshPhotoCache(apartmentId: string) {
                     </div>
                   </div>
                 </div>
-
               </div>
             </div>
           </div>

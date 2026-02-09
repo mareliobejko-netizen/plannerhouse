@@ -12,9 +12,9 @@ type EventRow = {
   created_at: string;
 };
 
-const WEBSITE_URL = "https://agriturismodogana.it"; // TODO: cambia
-const INSTAGRAM_URL = "https://instagram.com/"; // TODO: cambia
-const FACEBOOK_URL = "https://facebook.com/"; // TODO: cambia
+const WEBSITE_URL = "https://agriturismodogana.it/"; // TODO: cambia
+const INSTAGRAM_URL = "https://www.instagram.com/luciasitalia/"; // TODO: cambia
+const FACEBOOK_URL = "https://www.facebook.com/agriturismodogana.it/"; // TODO: cambia
 
 function IconGlobe(props: { size?: number }) {
   const s = props.size ?? 18;
@@ -175,23 +175,29 @@ export default function EventsHomePage() {
           </div>
 
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
-            <a className="btn-ghost" href={WEBSITE_URL} target="_blank" rel="noreferrer">
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                <IconGlobe /> Sito
-              </span>
-            </a>
+            <a className="btn-ghost social-btn" href={WEBSITE_URL} target="_blank" rel="noreferrer" aria-label="Apri il sito">
+  <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+    <IconGlobe />
+    <span className="social-text">Sito</span>
+  </span>
+</a>
 
-            <a className="btn-ghost" href={INSTAGRAM_URL} target="_blank" rel="noreferrer">
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                <IconInstagram /> Instagram
-              </span>
-            </a>
 
-            <a className="btn-ghost" href={FACEBOOK_URL} target="_blank" rel="noreferrer">
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                <IconFacebook /> Facebook
-              </span>
-            </a>
+            <a className="btn-ghost social-btn" href={INSTAGRAM_URL} target="_blank" rel="noreferrer" aria-label="Apri Instagram">
+  <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+    <IconInstagram />
+    <span className="social-text">Instagram</span>
+  </span>
+</a>
+
+
+           <a className="btn-ghost social-btn" href={FACEBOOK_URL} target="_blank" rel="noreferrer" aria-label="Apri Facebook">
+  <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+    <IconFacebook />
+    <span className="social-text">Facebook</span>
+  </span>
+</a>
+
 
             <button
               className="btn-ghost"

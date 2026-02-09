@@ -243,3 +243,174 @@ textarea{ resize: vertical; }
 .svg-box{
   contain: content;
 }
+
+
+/* Topbar social: su mobile mostra solo le icone */
+@media (max-width: 640px){
+  .social-text{ display: none !important; }
+  .social-btn{
+    padding: 10px 12px !important;
+    min-width: 44px;
+    justify-content: center !important;
+  }
+  .topbar-left .logo{
+    width: 120px; /* un filo più piccolo su mobile */
+  }
+}
+
+/* MODAL responsive layout */
+.modal-body-grid{
+  display: grid;
+  grid-template-columns: 0.95fr 1.25fr; /* foto più larga */
+  gap: 14px;
+  align-items: start;
+}
+
+@media (max-width: 900px){
+  .modal-body-grid{
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Foto hero */
+.photo-hero{
+  width: 100%;
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid rgba(48,64,48,.12);
+  background: rgba(255,255,255,.65);
+}
+
+.photo-hero img{
+  width: 100%;
+  height: clamp(220px, 32vh, 420px); /* grande su desktop, ok su mobile */
+  object-fit: cover;
+  display: block;
+}
+
+/* Bottoni frecce più “touch-friendly” */
+.photo-nav{
+  display:flex;
+  justify-content: space-between;
+  align-items:center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.photo-nav .btn-ghost.btn-sm{
+  min-width: 44px;
+  min-height: 44px;
+}
+
+/* Lista ospiti dentro al modal: non deve esplodere */
+.modal-guest-list{
+  max-height: 260px;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  padding-right: 6px;
+}
+
+@media (max-width: 900px){
+  .modal-guest-list{
+    max-height: 220px;
+  }
+}
+
+/* MODAL: dimensione massima e scroll interno */
+.modal{
+  max-height: min(92vh, 820px);
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-head{
+  flex: 0 0 auto;
+}
+
+.modal-body{
+  flex: 1 1 auto;
+  overflow: auto;                 /* ✅ scroll DENTRO al modal */
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Layout dentro il body */
+.modal-body-grid{
+  display: grid;
+  grid-template-columns: 0.95fr 1.25fr;
+  gap: 14px;
+  align-items: start;
+}
+
+@media (max-width: 900px){
+  .modal-body-grid{
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Foto hero: mai oltre il viewport */
+.photo-hero{
+  width: 100%;
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid rgba(48,64,48,.12);
+  background: rgba(255,255,255,.65);
+}
+
+.photo-hero img{
+  width: 100%;
+  height: clamp(200px, 30vh, 360px);  /* ✅ su mobile non “sfonda” */
+  object-fit: cover;
+  display: block;
+}
+
+/* Mini strip thumbnails */
+.photo-strip{
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+}
+
+@media (max-width: 420px){
+  .photo-strip{
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 6px;
+  }
+}
+
+.thumb{
+  border: 1px solid rgba(48,64,48,.12);
+  border-radius: 12px;
+  overflow: hidden;
+  aspect-ratio: 1 / 1;
+  background: rgba(255,255,255,.7);
+  cursor: pointer;
+}
+
+.thumb img{
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display:block;
+  opacity: .9;
+  transition: .12s ease;
+}
+
+.thumb:hover img{ opacity: 1; transform: scale(1.02); }
+.thumb.active{
+  outline: 2px solid rgba(48,64,48,.55);
+  outline-offset: 2px;
+}
+
+/* Tasti frecce touch friendly */
+.photo-nav{
+  display:flex;
+  justify-content: space-between;
+  align-items:center;
+  gap: 10px;
+  margin-top: 10px;
+}
+.photo-nav .btn-ghost.btn-sm{
+  min-width: 44px;
+  min-height: 44px;
+}
