@@ -231,3 +231,15 @@ textarea{ resize: vertical; }
 @media (max-width: 980px){
   .plan-wrap{ height: 420px; }
 }
+.plan-wrap{
+  max-height: 520px;
+  overflow: auto;
+}
+.plan-wrap svg{
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.svg-box{
+  contain: content;
+}

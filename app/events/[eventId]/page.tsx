@@ -73,6 +73,8 @@ export default function EventPlannerPage() {
 
   const [submitting, setSubmitting] = useState(false);
 
+  const [photoCache, setPhotoCache] = useState<Record<string, string[]>>({});
+
   // Occupancy
   const [occ, setOcc] = useState<OccRow[]>([]);
 
@@ -144,6 +146,8 @@ export default function EventPlannerPage() {
     });
   }, [occ]);
 
+  
+  
   async function refreshOccupancy() {
     if (!eventId) return;
     const { data, error } = await supabase
@@ -243,24 +247,44 @@ export default function EventPlannerPage() {
   }
 
   async function loadApartmentPhotos(apartmentId: string) {
-    setPhotoUrls([]);
-    setPhotoIndex(0);
+  setPhotoIndex(0);
 
-    const { data, error } = await supabase.storage
-      .from("apartment-photos")
-      .list(apartmentId, { limit: 100, sortBy: { column: "name", order: "asc" } });
-
-    if (error) throw new Error(error.message);
-
-    const files = (data ?? [])
-      .filter((f) => f.name && !f.name.endsWith("/"))
-      .map((f) => `${apartmentId}/${f.name}`);
-
-    const urls = files.map(
-      (path) => supabase.storage.from("apartment-photos").getPublicUrl(path).data.publicUrl
-    );
-    setPhotoUrls(urls);
+  // ✅ CACHE HIT: se già presenti, usa cache e basta
+  const cached = photoCache[apartmentId];
+  if (cached && cached.length) {
+    setPhotoUrls(cached);
+    return;
   }
+
+  // reset UI mentre carica
+  setPhotoUrls([]);
+
+  const { data, error } = await supabase.storage
+    .from("apartment-photos")
+    .list(apartmentId, { limit: 100, sortBy: { column: "name", order: "asc" } });
+
+  if (error) throw new Error(error.message);
+
+  const files = (data ?? [])
+    .filter((f) => f.name && !f.name.endsWith("/"))
+    .map((f) => `${apartmentId}/${f.name}`);
+
+  const urls = files.map(
+    (path) => supabase.storage.from("apartment-photos").getPublicUrl(path).data.publicUrl
+  );
+
+  // ✅ salva in cache + usa subito
+  setPhotoCache((prev) => ({ ...prev, [apartmentId]: urls }));
+  setPhotoUrls(urls);
+}
+function refreshPhotoCache(apartmentId: string) {
+  setPhotoCache((prev) => {
+    const next = { ...prev };
+    delete next[apartmentId];
+    return next;
+  });
+}
+
 
   function resetForm() {
     setFirstName("");
@@ -768,6 +792,16 @@ export default function EventPlannerPage() {
                   {/* Foto + ospiti */}
                   <div className="card card-pad" style={{ boxShadow: "none" }}>
                     <div className="h-serif" style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>Foto</div>
+<button
+  className="btn-ghost btn-sm"
+  onClick={() => {
+    if (!openAptId) return;
+    refreshPhotoCache(openAptId);
+    loadApartmentPhotos(openAptId);
+  }}
+>
+  Aggiorna foto
+</button>
 
                     {photoUrls.length === 0 ? (
                       <div className="muted">Nessuna foto caricata.</div>
