@@ -564,9 +564,10 @@ function refreshPhotoCache(apartmentId: string) {
     <>
       {/* TOPBAR */}
       <div className="topbar">
+        <div className="green-line" />
         <div className="topbar-inner">
           <div className="topbar-left">
-            <img src="/logo.svg" alt="Villa logo" className="logo" />
+            <img src="https://agriturismodogana.it/wp-content/uploads/2025/12/La-Dogana-2-1400x790.png" alt="Villa logo" className="logo" /> 
           </div>
 
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
@@ -594,7 +595,7 @@ function refreshPhotoCache(apartmentId: string) {
               Planner Camere
             </div>
             <div className="muted" style={{ marginTop: 6 }}>
-              Gestione ospiti e assegnazioni — stile villa
+              Gestione ospiti e assegnazioni
             </div>
           </div>
 
