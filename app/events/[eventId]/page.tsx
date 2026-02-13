@@ -617,7 +617,7 @@ setCheckoutDate(e || "");
 
 
             <button className="btn-ghost" onClick={() => (window.location.href = "/events")}>
-              Torna eventi
+              Home Page
             </button>
 
             <button
