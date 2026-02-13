@@ -1,0 +1,263 @@
+| schema | name                   | ddl                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ------ | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| public | admin_set_event_status | CREATE OR REPLACE FUNCTION public.admin_set_event_status(p_event_id uuid, p_status text)
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_uid uuid;
+  v_is_admin boolean;
+begin
+  v_uid := auth.uid();
+  if v_uid is null then
+    raise exception 'Not authenticated';
+  end if;
+
+  select p.is_admin into v_is_admin
+  from public.profiles p
+  where p.id = v_uid;
+
+  if coalesce(v_is_admin,false) = false then
+    raise exception 'Not allowed';
+  end if;
+
+  if p_status not in ('draft','submitted','final') then
+    raise exception 'Invalid status';
+  end if;
+
+  update public.events
+  set
+    status = p_status,
+    submitted_at = case when p_status='submitted' then now() else submitted_at end,
+    submitted_by = case when p_status='submitted' then v_uid else submitted_by end
+  where id = p_event_id;
+
+  if not found then
+    raise exception 'Event not found';
+  end if;
+end;
+$function$
+ |
+| public | handle_new_user        | CREATE OR REPLACE FUNCTION public.handle_new_user()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+begin
+  insert into public.profiles (id, is_admin)
+  values (new.id, false)
+  on conflict (id) do nothing;
+
+  return new;
+end;
+$function$
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| public | prevent_overbooking    | CREATE OR REPLACE FUNCTION public.prevent_overbooking()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+declare
+  cap int;
+  current_count int;
+begin
+  -- se non assegnato, ok
+  if new.apartment_id is null then
+    return new;
+  end if;
+
+  if new.event_id is null then
+    raise exception 'event_id is required';
+  end if;
+
+  select capacity into cap from apartments where id = new.apartment_id;
+
+  select count(*) into current_count
+  from guests
+  where apartment_id = new.apartment_id
+    and event_id = new.event_id;
+
+  if current_count >= cap then
+    raise exception 'Apartment % is full for event % (capacity %)', new.apartment_id, new.event_id, cap
+      using errcode = '23514';
+  end if;
+
+  return new;
+end;
+$function$
+                                                                                                                                                                                                                         |
+| public | set_updated_at         | CREATE OR REPLACE FUNCTION public.set_updated_at()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$function$
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| public | submit_event           | CREATE OR REPLACE FUNCTION public.submit_event(p_event_id uuid)
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_uid uuid;
+begin
+  v_uid := auth.uid();
+  if v_uid is null then
+    raise exception 'Not authenticated';
+  end if;
+
+  update public.events
+  set
+    status = 'submitted',
+    submitted_at = now(),
+    submitted_by = v_uid
+  where id = p_event_id;
+
+  if not found then
+    raise exception 'Evento non trovato o update non permesso';
+  end if;
+end;
+$function$
+                                                                                                                                                                                                                                                                                                                                                                                                                                             |	
+																																																																																																											
+																																																																																																											
+
+
+| schemaname | tablename     | policyname                          | cmd    | qual                                                                                                                                                                                                                                                                    | with_check                                                                                                                                                                                                                                                              |
+| ---------- | ------------- | ----------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| public     | event_members | event_members_insert                | INSERT | null                                                                                                                                                                                                                                                                    | (EXISTS ( SELECT 1
+   FROM events e
+  WHERE ((e.id = event_members.event_id) AND (e.created_by = auth.uid()))))                                                                                                                                                         |
+| public     | event_members | event_members_select                | SELECT | (user_id = auth.uid())                                                                                                                                                                                                                                                  | null                                                                                                                                                                                                                                                                    |
+| public     | events        | events_insert                       | INSERT | null                                                                                                                                                                                                                                                                    | (created_by = auth.uid())                                                                                                                                                                                                                                               |
+| public     | events        | events_select                       | SELECT | ((EXISTS ( SELECT 1
+   FROM event_members em
+  WHERE ((em.event_id = events.id) AND (em.user_id = auth.uid())))) OR (created_by = auth.uid()))                                                                                                                          | null                                                                                                                                                                                                                                                                    |
+| public     | events        | events_select_admin                 | SELECT | (EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.is_admin = true))))                                                                                                                                                                           | null                                                                                                                                                                                                                                                                    |
+| public     | events        | events_select_own                   | SELECT | (created_by = auth.uid())                                                                                                                                                                                                                                               | null                                                                                                                                                                                                                                                                    |
+| public     | events        | events_update_admin                 | UPDATE | (EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.is_admin = true))))                                                                                                                                                                           | (EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.is_admin = true))))                                                                                                                                                                           |
+| public     | events        | events_update_own_when_draft        | UPDATE | ((created_by = auth.uid()) AND (status = 'draft'::text))                                                                                                                                                                                                                | ((created_by = auth.uid()) AND (status = ANY (ARRAY['draft'::text, 'submitted'::text, 'final'::text])))                                                                                                                                                                 |
+| public     | guests        | guests_delete                       | DELETE | (EXISTS ( SELECT 1
+   FROM event_members em
+  WHERE ((em.event_id = guests.event_id) AND (em.user_id = auth.uid()))))                                                                                                                                                   | null                                                                                                                                                                                                                                                                    |
+| public     | guests        | guests_delete_owner_or_member_draft | DELETE | (EXISTS ( SELECT 1
+   FROM events e
+  WHERE ((e.id = guests.event_id) AND (e.status = 'draft'::text) AND ((e.created_by = auth.uid()) OR (EXISTS ( SELECT 1
+           FROM event_members em
+          WHERE ((em.event_id = e.id) AND (em.user_id = auth.uid())))))))) | null                                                                                                                                                                                                                                                                    |
+| public     | guests        | guests_insert                       | INSERT | null                                                                                                                                                                                                                                                                    | (EXISTS ( SELECT 1
+   FROM event_members em
+  WHERE ((em.event_id = guests.event_id) AND (em.user_id = auth.uid()))))                                                                                                                                                   |
+| public     | guests        | guests_insert_owner_or_member_draft | INSERT | null                                                                                                                                                                                                                                                                    | (EXISTS ( SELECT 1
+   FROM events e
+  WHERE ((e.id = guests.event_id) AND (e.status = 'draft'::text) AND ((e.created_by = auth.uid()) OR (EXISTS ( SELECT 1
+           FROM event_members em
+          WHERE ((em.event_id = e.id) AND (em.user_id = auth.uid())))))))) |
+| public     | guests        | guests_select                       | SELECT | (EXISTS ( SELECT 1
+   FROM event_members em
+  WHERE ((em.event_id = guests.event_id) AND (em.user_id = auth.uid()))))                                                                                                                                                   | null                                                                                                                                                                                                                                                                    |
+| public     | guests        | guests_select_admin                 | SELECT | (EXISTS ( SELECT 1
+   FROM profiles p
+  WHERE ((p.id = auth.uid()) AND (p.is_admin = true))))                                                                                                                                                                           | null                                                                                                                                                                                                                                                                    |
+| public     | guests        | guests_select_owner_or_member       | SELECT | (EXISTS ( SELECT 1
+   FROM events e
+  WHERE ((e.id = guests.event_id) AND ((e.created_by = auth.uid()) OR (EXISTS ( SELECT 1
+           FROM event_members em
+          WHERE ((em.event_id = e.id) AND (em.user_id = auth.uid()))))))))                                | null                                                                                                                                                                                                                                                                    |
+| public     | guests        | guests_update                       | UPDATE | (EXISTS ( SELECT 1
+   FROM event_members em
+  WHERE ((em.event_id = guests.event_id) AND (em.user_id = auth.uid()))))                                                                                                                                                   | null                                                                                                                                                                                                                                                                    |
+| public     | guests        | guests_update_owner_or_member_draft | UPDATE | (EXISTS ( SELECT 1
+   FROM events e
+  WHERE ((e.id = guests.event_id) AND (e.status = 'draft'::text) AND ((e.created_by = auth.uid()) OR (EXISTS ( SELECT 1
+           FROM event_members em
+          WHERE ((em.event_id = e.id) AND (em.user_id = auth.uid())))))))) | (EXISTS ( SELECT 1
+   FROM events e
+  WHERE ((e.id = guests.event_id) AND (e.status = 'draft'::text) AND ((e.created_by = auth.uid()) OR (EXISTS ( SELECT 1
+           FROM event_members em
+          WHERE ((em.event_id = e.id) AND (em.user_id = auth.uid())))))))) |
+| public     | notifications | read own notifications              | SELECT | (to_user_id = auth.uid())                                                                                                                                                                                                                                               | null                                                                                                                                                                                                                                                                    |
+| public     | profiles      | profiles_select_own                 | SELECT | (id = auth.uid())                                                                                                                                                                                                                                                       | null                                                                                                                                                                                                                                                                    |
+| public     | profiles      | profiles_update_own                 | UPDATE | (id = auth.uid())                                                                                                                                                                                                                                                       | (id = auth.uid())                                                                                                                                                                                                                                                       |
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+| table_name          | column_name   | data_type                | is_nullable |
+| ------------------- | ------------- | ------------------------ | ----------- |
+| apartment_occupancy | event_id      | uuid                     | YES         |
+| apartment_occupancy | apartment_id  | text                     | YES         |
+| apartment_occupancy | label         | text                     | YES         |
+| apartment_occupancy | capacity      | integer                  | YES         |
+| apartment_occupancy | structure     | text                     | YES         |
+| apartment_occupancy | floor         | integer                  | YES         |
+| apartment_occupancy | guests_count  | integer                  | YES         |
+| apartments          | id            | text                     | NO          |
+| apartments          | label         | text                     | NO          |
+| apartments          | capacity      | integer                  | NO          |
+| apartments          | structure     | text                     | NO          |
+| apartments          | floor         | integer                  | NO          |
+| apartments          | created_at    | timestamp with time zone | YES         |
+| event_members       | event_id      | uuid                     | NO          |
+| event_members       | user_id       | uuid                     | NO          |
+| event_members       | role          | text                     | NO          |
+| event_members       | created_at    | timestamp with time zone | YES         |
+| events              | id            | uuid                     | NO          |
+| events              | name          | text                     | NO          |
+| events              | start_date    | date                     | YES         |
+| events              | end_date      | date                     | YES         |
+| events              | created_by    | uuid                     | NO          |
+| events              | created_at    | timestamp with time zone | YES         |
+| events              | status        | text                     | NO          |
+| events              | submitted_at  | timestamp with time zone | YES         |
+| events              | submitted_by  | uuid                     | YES         |
+| guests              | id            | uuid                     | NO          |
+| guests              | apartment_id  | text                     | YES         |
+| guests              | first_name    | text                     | NO          |
+| guests              | last_name     | text                     | NO          |
+| guests              | guest_type    | text                     | NO          |
+| guests              | child_age     | integer                  | YES         |
+| guests              | arrival_mode  | text                     | YES         |
+| guests              | checkin_date  | date                     | YES         |
+| guests              | checkout_date | date                     | YES         |
+| guests              | extra_nights  | integer                  | NO          |
+| guests              | allergies     | text                     | YES         |
+| guests              | notes         | text                     | YES         |
+| guests              | created_at    | timestamp with time zone | YES         |
+| guests              | updated_at    | timestamp with time zone | YES         |
+| guests              | event_id      | uuid                     | YES         |
+| notifications       | id            | uuid                     | NO          |
+| notifications       | to_user_id    | uuid                     | NO          |
+| notifications       | type          | text                     | NO          |
+| notifications       | title         | text                     | NO          |
+| notifications       | message       | text                     | YES         |
+| notifications       | event_id      | uuid                     | YES         |
+| notifications       | read_at       | timestamp with time zone | YES         |
+| notifications       | created_at    | timestamp with time zone | NO          |
+| profiles            | id            | uuid                     | NO          |
+| profiles            | full_name     | text                     | YES         |
+| profiles            | is_admin      | boolean                  | NO          |
+| profiles            | created_at    | timestamp with time zone | NO          |

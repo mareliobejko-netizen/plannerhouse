@@ -1,0 +1,519 @@
+[
+  {
+    "schema": "public",
+    "name": "admin_set_event_status",
+    "ddl": "CREATE OR REPLACE FUNCTION public.admin_set_event_status(p_event_id uuid, p_status text)\n RETURNS void\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'public'\nAS $function$\r\ndeclare\r\n  v_uid uuid;\r\n  v_is_admin boolean;\r\nbegin\r\n  v_uid := auth.uid();\r\n  if v_uid is null then\r\n    raise exception 'Not authenticated';\r\n  end if;\r\n\r\n  select p.is_admin into v_is_admin\r\n  from public.profiles p\r\n  where p.id = v_uid;\r\n\r\n  if coalesce(v_is_admin,false) = false then\r\n    raise exception 'Not allowed';\r\n  end if;\r\n\r\n  if p_status not in ('draft','submitted','final') then\r\n    raise exception 'Invalid status';\r\n  end if;\r\n\r\n  update public.events\r\n  set\r\n    status = p_status,\r\n    submitted_at = case when p_status='submitted' then now() else submitted_at end,\r\n    submitted_by = case when p_status='submitted' then v_uid else submitted_by end\r\n  where id = p_event_id;\r\n\r\n  if not found then\r\n    raise exception 'Event not found';\r\n  end if;\r\nend;\r\n$function$\n"
+  },
+  {
+    "schema": "public",
+    "name": "handle_new_user",
+    "ddl": "CREATE OR REPLACE FUNCTION public.handle_new_user()\n RETURNS trigger\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'public'\nAS $function$\r\nbegin\r\n  insert into public.profiles (id, is_admin)\r\n  values (new.id, false)\r\n  on conflict (id) do nothing;\r\n\r\n  return new;\r\nend;\r\n$function$\n"
+  },
+  {
+    "schema": "public",
+    "name": "prevent_overbooking",
+    "ddl": "CREATE OR REPLACE FUNCTION public.prevent_overbooking()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\r\ndeclare\r\n  cap int;\r\n  current_count int;\r\nbegin\r\n  -- se non assegnato, ok\r\n  if new.apartment_id is null then\r\n    return new;\r\n  end if;\r\n\r\n  if new.event_id is null then\r\n    raise exception 'event_id is required';\r\n  end if;\r\n\r\n  select capacity into cap from apartments where id = new.apartment_id;\r\n\r\n  select count(*) into current_count\r\n  from guests\r\n  where apartment_id = new.apartment_id\r\n    and event_id = new.event_id;\r\n\r\n  if current_count >= cap then\r\n    raise exception 'Apartment % is full for event % (capacity %)', new.apartment_id, new.event_id, cap\r\n      using errcode = '23514';\r\n  end if;\r\n\r\n  return new;\r\nend;\r\n$function$\n"
+  },
+  {
+    "schema": "public",
+    "name": "set_updated_at",
+    "ddl": "CREATE OR REPLACE FUNCTION public.set_updated_at()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\r\nbegin\r\n  new.updated_at = now();\r\n  return new;\r\nend;\r\n$function$\n"
+  },
+  {
+    "schema": "public",
+    "name": "submit_event",
+    "ddl": "CREATE OR REPLACE FUNCTION public.submit_event(p_event_id uuid)\n RETURNS void\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'public'\nAS $function$\r\ndeclare\r\n  v_uid uuid;\r\nbegin\r\n  v_uid := auth.uid();\r\n  if v_uid is null then\r\n    raise exception 'Not authenticated';\r\n  end if;\r\n\r\n  update public.events\r\n  set\r\n    status = 'submitted',\r\n    submitted_at = now(),\r\n    submitted_by = v_uid\r\n  where id = p_event_id;\r\n\r\n  if not found then\r\n    raise exception 'Evento non trovato o update non permesso';\r\n  end if;\r\nend;\r\n$function$\n"
+  }
+]
+
+
+|||||||||||||||||||||||||||||||\\
+
+[
+  {
+    "schemaname": "public",
+    "tablename": "event_members",
+    "policyname": "event_members_insert",
+    "cmd": "INSERT",
+    "qual": null,
+    "with_check": "(EXISTS ( SELECT 1\n   FROM events e\n  WHERE ((e.id = event_members.event_id) AND (e.created_by = auth.uid()))))"
+  },
+  {
+    "schemaname": "public",
+    "tablename": "event_members",
+    "policyname": "event_members_select",
+    "cmd": "SELECT",
+    "qual": "(user_id = auth.uid())",
+    "with_check": null
+  },
+  {
+    "schemaname": "public",
+    "tablename": "events",
+    "policyname": "events_insert",
+    "cmd": "INSERT",
+    "qual": null,
+    "with_check": "(created_by = auth.uid())"
+  },
+  {
+    "schemaname": "public",
+    "tablename": "events",
+    "policyname": "events_select",
+    "cmd": "SELECT",
+    "qual": "((EXISTS ( SELECT 1\n   FROM event_members em\n  WHERE ((em.event_id = events.id) AND (em.user_id = auth.uid())))) OR (created_by = auth.uid()))",
+    "with_check": null
+  },
+  {
+    "schemaname": "public",
+    "tablename": "events",
+    "policyname": "events_select_admin",
+    "cmd": "SELECT",
+    "qual": "(EXISTS ( SELECT 1\n   FROM profiles p\n  WHERE ((p.id = auth.uid()) AND (p.is_admin = true))))",
+    "with_check": null
+  },
+  {
+    "schemaname": "public",
+    "tablename": "events",
+    "policyname": "events_select_own",
+    "cmd": "SELECT",
+    "qual": "(created_by = auth.uid())",
+    "with_check": null
+  },
+  {
+    "schemaname": "public",
+    "tablename": "events",
+    "policyname": "events_update_admin",
+    "cmd": "UPDATE",
+    "qual": "(EXISTS ( SELECT 1\n   FROM profiles p\n  WHERE ((p.id = auth.uid()) AND (p.is_admin = true))))",
+    "with_check": "(EXISTS ( SELECT 1\n   FROM profiles p\n  WHERE ((p.id = auth.uid()) AND (p.is_admin = true))))"
+  },
+  {
+    "schemaname": "public",
+    "tablename": "events",
+    "policyname": "events_update_own_when_draft",
+    "cmd": "UPDATE",
+    "qual": "((created_by = auth.uid()) AND (status = 'draft'::text))",
+    "with_check": "((created_by = auth.uid()) AND (status = ANY (ARRAY['draft'::text, 'submitted'::text, 'final'::text])))"
+  },
+  {
+    "schemaname": "public",
+    "tablename": "guests",
+    "policyname": "guests_delete",
+    "cmd": "DELETE",
+    "qual": "(EXISTS ( SELECT 1\n   FROM event_members em\n  WHERE ((em.event_id = guests.event_id) AND (em.user_id = auth.uid()))))",
+    "with_check": null
+  },
+  {
+    "schemaname": "public",
+    "tablename": "guests",
+    "policyname": "guests_delete_owner_or_member_draft",
+    "cmd": "DELETE",
+    "qual": "(EXISTS ( SELECT 1\n   FROM events e\n  WHERE ((e.id = guests.event_id) AND (e.status = 'draft'::text) AND ((e.created_by = auth.uid()) OR (EXISTS ( SELECT 1\n           FROM event_members em\n          WHERE ((em.event_id = e.id) AND (em.user_id = auth.uid()))))))))",
+    "with_check": null
+  },
+  {
+    "schemaname": "public",
+    "tablename": "guests",
+    "policyname": "guests_insert",
+    "cmd": "INSERT",
+    "qual": null,
+    "with_check": "(EXISTS ( SELECT 1\n   FROM event_members em\n  WHERE ((em.event_id = guests.event_id) AND (em.user_id = auth.uid()))))"
+  },
+  {
+    "schemaname": "public",
+    "tablename": "guests",
+    "policyname": "guests_insert_owner_or_member_draft",
+    "cmd": "INSERT",
+    "qual": null,
+    "with_check": "(EXISTS ( SELECT 1\n   FROM events e\n  WHERE ((e.id = guests.event_id) AND (e.status = 'draft'::text) AND ((e.created_by = auth.uid()) OR (EXISTS ( SELECT 1\n           FROM event_members em\n          WHERE ((em.event_id = e.id) AND (em.user_id = auth.uid()))))))))"
+  },
+  {
+    "schemaname": "public",
+    "tablename": "guests",
+    "policyname": "guests_select",
+    "cmd": "SELECT",
+    "qual": "(EXISTS ( SELECT 1\n   FROM event_members em\n  WHERE ((em.event_id = guests.event_id) AND (em.user_id = auth.uid()))))",
+    "with_check": null
+  },
+  {
+    "schemaname": "public",
+    "tablename": "guests",
+    "policyname": "guests_select_admin",
+    "cmd": "SELECT",
+    "qual": "(EXISTS ( SELECT 1\n   FROM profiles p\n  WHERE ((p.id = auth.uid()) AND (p.is_admin = true))))",
+    "with_check": null
+  },
+  {
+    "schemaname": "public",
+    "tablename": "guests",
+    "policyname": "guests_select_owner_or_member",
+    "cmd": "SELECT",
+    "qual": "(EXISTS ( SELECT 1\n   FROM events e\n  WHERE ((e.id = guests.event_id) AND ((e.created_by = auth.uid()) OR (EXISTS ( SELECT 1\n           FROM event_members em\n          WHERE ((em.event_id = e.id) AND (em.user_id = auth.uid()))))))))",
+    "with_check": null
+  },
+  {
+    "schemaname": "public",
+    "tablename": "guests",
+    "policyname": "guests_update",
+    "cmd": "UPDATE",
+    "qual": "(EXISTS ( SELECT 1\n   FROM event_members em\n  WHERE ((em.event_id = guests.event_id) AND (em.user_id = auth.uid()))))",
+    "with_check": null
+  },
+  {
+    "schemaname": "public",
+    "tablename": "guests",
+    "policyname": "guests_update_owner_or_member_draft",
+    "cmd": "UPDATE",
+    "qual": "(EXISTS ( SELECT 1\n   FROM events e\n  WHERE ((e.id = guests.event_id) AND (e.status = 'draft'::text) AND ((e.created_by = auth.uid()) OR (EXISTS ( SELECT 1\n           FROM event_members em\n          WHERE ((em.event_id = e.id) AND (em.user_id = auth.uid()))))))))",
+    "with_check": "(EXISTS ( SELECT 1\n   FROM events e\n  WHERE ((e.id = guests.event_id) AND (e.status = 'draft'::text) AND ((e.created_by = auth.uid()) OR (EXISTS ( SELECT 1\n           FROM event_members em\n          WHERE ((em.event_id = e.id) AND (em.user_id = auth.uid()))))))))"
+  },
+  {
+    "schemaname": "public",
+    "tablename": "notifications",
+    "policyname": "read own notifications",
+    "cmd": "SELECT",
+    "qual": "(to_user_id = auth.uid())",
+    "with_check": null
+  },
+  {
+    "schemaname": "public",
+    "tablename": "profiles",
+    "policyname": "profiles_select_own",
+    "cmd": "SELECT",
+    "qual": "(id = auth.uid())",
+    "with_check": null
+  },
+  {
+    "schemaname": "public",
+    "tablename": "profiles",
+    "policyname": "profiles_update_own",
+    "cmd": "UPDATE",
+    "qual": "(id = auth.uid())",
+    "with_check": "(id = auth.uid())"
+  }
+]
+
+
+
+
+|||||||||\
+
+[
+  {
+    "table_name": "apartment_occupancy",
+    "column_name": "event_id",
+    "data_type": "uuid",
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "apartment_occupancy",
+    "column_name": "apartment_id",
+    "data_type": "text",
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "apartment_occupancy",
+    "column_name": "label",
+    "data_type": "text",
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "apartment_occupancy",
+    "column_name": "capacity",
+    "data_type": "integer",
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "apartment_occupancy",
+    "column_name": "structure",
+    "data_type": "text",
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "apartment_occupancy",
+    "column_name": "floor",
+    "data_type": "integer",
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "apartment_occupancy",
+    "column_name": "guests_count",
+    "data_type": "integer",
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "apartments",
+    "column_name": "id",
+    "data_type": "text",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "apartments",
+    "column_name": "label",
+    "data_type": "text",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "apartments",
+    "column_name": "capacity",
+    "data_type": "integer",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "apartments",
+    "column_name": "structure",
+    "data_type": "text",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "apartments",
+    "column_name": "floor",
+    "data_type": "integer",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "apartments",
+    "column_name": "created_at",
+    "data_type": "timestamp with time zone",
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "event_members",
+    "column_name": "event_id",
+    "data_type": "uuid",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "event_members",
+    "column_name": "user_id",
+    "data_type": "uuid",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "event_members",
+    "column_name": "role",
+    "data_type": "text",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "event_members",
+    "column_name": "created_at",
+    "data_type": "timestamp with time zone",
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "events",
+    "column_name": "id",
+    "data_type": "uuid",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "events",
+    "column_name": "name",
+    "data_type": "text",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "events",
+    "column_name": "start_date",
+    "data_type": "date",
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "events",
+    "column_name": "end_date",
+    "data_type": "date",
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "events",
+    "column_name": "created_by",
+    "data_type": "uuid",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "events",
+    "column_name": "created_at",
+    "data_type": "timestamp with time zone",
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "events",
+    "column_name": "status",
+    "data_type": "text",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "events",
+    "column_name": "submitted_at",
+    "data_type": "timestamp with time zone",
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "events",
+    "column_name": "submitted_by",
+    "data_type": "uuid",
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "guests",
+    "column_name": "id",
+    "data_type": "uuid",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "guests",
+    "column_name": "apartment_id",
+    "data_type": "text",
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "guests",
+    "column_name": "first_name",
+    "data_type": "text",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "guests",
+    "column_name": "last_name",
+    "data_type": "text",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "guests",
+    "column_name": "guest_type",
+    "data_type": "text",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "guests",
+    "column_name": "child_age",
+    "data_type": "integer",
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "guests",
+    "column_name": "arrival_mode",
+    "data_type": "text",
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "guests",
+    "column_name": "checkin_date",
+    "data_type": "date",
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "guests",
+    "column_name": "checkout_date",
+    "data_type": "date",
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "guests",
+    "column_name": "extra_nights",
+    "data_type": "integer",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "guests",
+    "column_name": "allergies",
+    "data_type": "text",
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "guests",
+    "column_name": "notes",
+    "data_type": "text",
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "guests",
+    "column_name": "created_at",
+    "data_type": "timestamp with time zone",
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "guests",
+    "column_name": "updated_at",
+    "data_type": "timestamp with time zone",
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "guests",
+    "column_name": "event_id",
+    "data_type": "uuid",
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "notifications",
+    "column_name": "id",
+    "data_type": "uuid",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "notifications",
+    "column_name": "to_user_id",
+    "data_type": "uuid",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "notifications",
+    "column_name": "type",
+    "data_type": "text",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "notifications",
+    "column_name": "title",
+    "data_type": "text",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "notifications",
+    "column_name": "message",
+    "data_type": "text",
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "notifications",
+    "column_name": "event_id",
+    "data_type": "uuid",
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "notifications",
+    "column_name": "read_at",
+    "data_type": "timestamp with time zone",
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "notifications",
+    "column_name": "created_at",
+    "data_type": "timestamp with time zone",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "profiles",
+    "column_name": "id",
+    "data_type": "uuid",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "profiles",
+    "column_name": "full_name",
+    "data_type": "text",
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "profiles",
+    "column_name": "is_admin",
+    "data_type": "boolean",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "profiles",
+    "column_name": "created_at",
+    "data_type": "timestamp with time zone",
+    "is_nullable": "NO"
+  }
+]

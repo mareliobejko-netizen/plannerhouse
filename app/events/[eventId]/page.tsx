@@ -85,6 +85,9 @@ export default function EventPlannerPage() {
   const [assignTo, setAssignTo] = useState<Record<string, string>>({});
   const [sidebarErr, setSidebarErr] = useState<string | null>(null);
 
+
+
+
   // Search
   const [search, setSearch] = useState("");
   const [searching, setSearching] = useState(false);
@@ -110,6 +113,13 @@ export default function EventPlannerPage() {
   const [arrivalMode, setArrivalMode] = useState<"" | "car" | "transfer">("");
   const [checkinDate, setCheckinDate] = useState<string>("");
   const [checkoutDate, setCheckoutDate] = useState<string>("");
+  const [eventStart, setEventStart] = useState<string>(""); // YYYY-MM-DD
+const [eventEnd, setEventEnd] = useState<string>("");     // YYYY-MM-DD
+//busta
+const [confirmOpen, setConfirmOpen] = useState(false);
+const [mailStage, setMailStage] = useState<"open" | "closing" | "closed">("open");
+
+
   const [extraNights, setExtraNights] = useState<number>(0);
   const [allergies, setAllergies] = useState("");
   const [notes, setNotes] = useState("");
@@ -141,6 +151,19 @@ export default function EventPlannerPage() {
       return { id: r.apartment_id, label, status: st };
     });
   }, [occ]);
+function isoDate(d: Date) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function addDaysIso(iso: string, days: number) {
+  const [y, m, d] = iso.split("-").map(Number);
+  const dt = new Date(y, m - 1, d);
+  dt.setDate(dt.getDate() + days);
+  return isoDate(dt);
+}
 
   function resetForm() {
     setFirstName("");
@@ -260,39 +283,38 @@ export default function EventPlannerPage() {
   }
 
   async function submitEvent() {
-    if (!eventId) return;
+  if (!eventId) return;
 
-    setUiMsg(null);
-    const ok = confirm("Confermare la lista? Dopo non potrai più modificare.");
-    if (!ok) return;
+  setSubmitting(true);
 
-    setSubmitting(true);
-    try {
-      const { data: u, error: uErr } = await supabase.auth.getUser();
-      if (uErr) throw new Error(uErr.message);
-      if (!u?.user) throw new Error("Non autenticato. Rifai login.");
+  try {
+    const { data: u, error: uErr } = await supabase.auth.getUser();
+    if (uErr) throw new Error(uErr.message);
+    if (!u?.user) throw new Error("Non autenticato. Rifai login.");
 
-      const { error } = await supabase
-        .from("events")
-        .update({
-          status: "submitted",
-          submitted_at: new Date().toISOString(),
-          submitted_by: u.user.id,
-        })
-        .eq("id", eventId)
-        .eq("created_by", u.user.id)
-        .eq("status", "draft");
+    const { error } = await supabase
+      .from("events")
+      .update({
+        status: "submitted",
+        submitted_at: new Date().toISOString(),
+        submitted_by: u.user.id,
+      })
+      .eq("id", eventId)
+      .eq("created_by", u.user.id)
+      .eq("status", "draft");
 
-      if (error) throw new Error(error.message);
+    if (error) throw new Error(error.message);
 
-      await refreshEventStatus();
-      setUiMsg({ type: "ok", text: "✅ Lista confermata. Ora non puoi più modificare." });
-    } catch (e: any) {
-      setUiMsg({ type: "err", text: `❌ Conferma fallita: ${e?.message ?? "errore sconosciuto"}` });
-    } finally {
-      setSubmitting(false);
-    }
+    await refreshEventStatus();
+    setUiMsg({ type: "ok", text: "✅ Lista inviata a Lucia e al team." });
+  } catch (e: any) {
+    setUiMsg({ type: "err", text: `❌ Invio fallito: ${e?.message ?? "errore sconosciuto"}` });
+    throw e;
+  } finally {
+    setSubmitting(false);
   }
+}
+
 
   async function runSearch() {
     if (!eventId) return;
@@ -331,6 +353,10 @@ export default function EventPlannerPage() {
   async function openApartment(apartmentId: string) {
     setModalErr(null);
     setOpenAptId(apartmentId);
+    // ✅ ogni volta che apro il modal, riparto dalle date evento
+setCheckinDate(eventStart || "");
+setCheckoutDate(eventEnd || "");
+
     resetForm();
     try {
       await Promise.all([loadGuestsForApartment(apartmentId), loadApartmentPhotos(apartmentId)]);
@@ -464,7 +490,9 @@ export default function EventPlannerPage() {
 
   // INIT: auth + load once
   useEffect(() => {
+    
     (async () => {
+      
       try {
         setErr(null);
         setUiMsg(null);
@@ -491,8 +519,26 @@ export default function EventPlannerPage() {
         setOcc(occRows);
 
         // Status
-        const { data: ev, error: evErr } = await supabase.from("events").select("status").eq("id", eventId).single();
-        if (evErr) throw new Error(evErr.message);
+const { data: ev, error: evErr } = await supabase
+  .from("events")
+  .select("status,start_date,end_date")
+  .eq("id", eventId)
+  .single();
+
+if (evErr) throw new Error(evErr.message);
+
+if (ev?.status) setEventStatus(ev.status);
+
+// ✅ queste sono le date decise dall'admin
+const s = (ev?.start_date ?? "") as string;
+const e = (ev?.end_date ?? "") as string;
+
+setEventStart(s);
+setEventEnd(e);
+
+// ✅ default quando apri il form: check-in = start_date, check-out = end_date
+setCheckinDate(s || "");
+setCheckoutDate(e || "");
         if (ev?.status) setEventStatus(ev.status);
 
         // Unassigned
@@ -561,13 +607,14 @@ export default function EventPlannerPage() {
             <span className={`badge ${eventStatus}`}>Stato: {statusLabel}</span>
 
             <button
-              className="btn"
-              onClick={submitEvent}
-              disabled={submitting || eventStatus !== "draft"}
-              title={eventStatus !== "draft" ? "Evento già confermato" : "Conferma lista"}
-            >
-              {submitting ? "Confermo..." : "Conferma lista"}
-            </button>
+  className="btn"
+  onClick={() => setConfirmOpen(true)}
+  disabled={submitting || eventStatus !== "draft"}
+  title={eventStatus !== "draft" ? "Evento già confermato" : "Conferma lista"}
+>
+  {submitting ? "Confermo..." : "Conferma lista"}
+</button>
+
 
             <button className="btn-ghost" onClick={() => (window.location.href = "/events")}>
               Torna eventi
@@ -968,17 +1015,44 @@ export default function EventPlannerPage() {
                         </select>
                       </div>
 
-                      {/* Check-in/out */}
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                        <div>
-                          <div className="label">Check-in</div>
-                          <input className="input" type="date" value={checkinDate} onChange={(e) => setCheckinDate(e.target.value)} disabled={saving || locked} />
-                        </div>
-                        <div>
-                          <div className="label">Check-out</div>
-                          <input className="input" type="date" value={checkoutDate} onChange={(e) => setCheckoutDate(e.target.value)} disabled={saving || locked} />
-                        </div>
-                      </div>
+                    {/* Check-in/out */}
+{/* ✅ Date evento decise dall'admin: cliente può scegliere solo check-in = start oppure start-1; check-out fisso = end */}
+<div style={{ display: "grid", minWidth: 0, gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+  <div>
+    <div className="label">Check-in</div>
+
+    <select
+      value={checkinDate || eventStart}
+      disabled={saving || locked || !eventStart}
+      onChange={(e) => setCheckinDate(e.target.value)}
+    >
+      <option value={eventStart}>{eventStart}</option>
+      <option value={addDaysIso(eventStart, -1)}>
+        {addDaysIso(eventStart, -1)} (one day before)
+      </option>
+    </select>
+
+    <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+      Se vuoi arrivare prima, scegli “1 giorno prima”.
+    </div>
+  </div>
+
+  <div>
+    <div className="label">Check-out</div>
+
+    <select
+      value={checkoutDate || eventEnd}
+      disabled={saving || locked || !eventEnd}
+      onChange={(e) => setCheckoutDate(e.target.value)} // ✅ fix
+    >
+      <option value={eventEnd}>{eventEnd}</option>
+    </select>
+
+    <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+      Check-out fissato dall’evento.
+    </div>
+  </div>
+</div>
 
                       <div>
                         <div className="label">Notti extra</div>
@@ -1014,7 +1088,112 @@ export default function EventPlannerPage() {
             </div>
           </div>
         )}
+      </div>{/* Bottone nella topbar */}
+<button
+  className="btn"
+  onClick={() => {
+    setMailStage("open");
+    setConfirmOpen(true);
+  }}
+  disabled={submitting || eventStatus !== "draft"}
+  title={eventStatus !== "draft" ? "Evento già confermato" : "Conferma lista"}
+>
+  {submitting ? "Confermo..." : "Conferma lista"}
+</button>
+
+{/* POPUP MAILBOX */}
+{confirmOpen && (
+  <div
+    className="mbox-backdrop"
+    onClick={() => {
+      if (submitting || mailStage !== "open") return;
+      setConfirmOpen(false);
+    }}
+  >
+    <div className={`mbox-modal ${mailStage}`} onClick={(e) => e.stopPropagation()}>
+      {/* titolo piccolo */}
+      
+
+      <div className="mbox-scene">
+        {/* MAILBOX */}
+        <div className="mailbox">
+          {/* logo fuori */}
+          <div className="mailbox-logo">
+            <img src="/logo.svg" alt="logo" />
+          </div>
+
+          {/* bandierina */}
+          <div className="mailbox-flag" aria-hidden />
+
+          {/* sportello */}
+          <div className="mailbox-door" aria-hidden />
+
+          {/* interno + lettera */}
+          <div className="mailbox-inner">
+            <div className="letter">
+              <div className="letter-head">
+                <div className="letter-chip">Guests List</div>
+                <div className="letter-seal">
+                  <img src="/logo.svg" alt="seal" />
+                </div>
+              </div>
+
+              <div className="letter-body">
+                Please click the button below when your list is completed and you would like to send it to Lucia and her team.
+              </div>
+
+              <div className="letter-actions">
+                <button
+                  className="btn letter-send"
+                  disabled={submitting || mailStage !== "open"}
+                  onClick={async () => {
+                    try {
+                      // anima chiusura
+                      setMailStage("closing");
+                      setTimeout(() => setMailStage("closed"), 520);
+
+                      // esegue submit reale
+                      await submitEvent();
+
+                      // chiude popup dopo l’animazione
+                      setTimeout(() => {
+                        setConfirmOpen(false);
+                        setMailStage("open");
+                      }, 850);
+                    } catch (e) {
+                      // se fallisce, riapri
+                      setMailStage("open");
+                    }
+                  }}
+                >
+                  {submitting ? "Sending…" : "Send to Lucia & team"}
+                </button>
+
+                <button
+                  className="btn-ghost letter-notyet"
+                  disabled={submitting || mailStage !== "open"}
+                  onClick={() => setConfirmOpen(false)}
+                >
+                  Not yet
+                </button>
+              </div>
+
+              <div className="letter-hint">
+                Once sent, you won’t be able to edit the list.
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
+
+      {/* piccola nota */}
+      <div className="mbox-foot muted">
+        Tap outside to close (only while open).
+      </div>
+    </div>
+  </div>
+)}
+
     </>
   );
 }
